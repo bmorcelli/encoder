@@ -58,6 +58,16 @@ typedef enum
     RE_BTN_LONG_PRESSED = 2   //!< Button currently long pressed
 } rotary_encoder_btn_state_t;
 
+/**
+ * Controller button selection
+ */
+typedef enum
+{
+    RE_BTN_NONE = -1, //!< Event not related to a button
+    RE_BTN_1 = 0,     //!< Primary button (pin_btn)
+    RE_BTN_2 = 1      //!< Optional secondary button (pin_btn2)
+} rotary_encoder_button_t;
+
 //Rotary encoder acceleration variables
 typedef struct
 {
@@ -69,12 +79,14 @@ typedef struct
  */
 typedef struct
 {
-    gpio_num_t pin_a, pin_b, pin_btn; //!< Encoder pins. pin_btn can be >= GPIO_NUM_MAX if no button used
+    gpio_num_t pin_a, pin_b;          //!< Encoder signal pins
+    gpio_num_t pin_btn;               //!< Primary button pin. Set to GPIO_NUM_NC to disable
+    gpio_num_t pin_btn2;              //!< Optional secondary button pin. Set to GPIO_NUM_NC (default) to disable
     uint8_t code;
     uint16_t store;
     size_t index;
-    uint64_t btn_pressed_time_us;
-    rotary_encoder_btn_state_t btn_state;
+    uint64_t btn_pressed_time_us[2];
+    rotary_encoder_btn_state_t btn_state[2];
     rotary_encoder_acceleration_t acceleration;
 } rotary_encoder_t;
 
@@ -97,6 +109,7 @@ typedef struct
 {
     rotary_encoder_event_type_t type;  //!< Event type
     rotary_encoder_t *sender;          //!< Pointer to descriptor
+    rotary_encoder_button_t button;    //!< Button producing the event, RE_BTN_NONE for rotary events
     int32_t diff;                      //!< Difference between new and old positions (only if type == RE_ET_CHANGED)
 } rotary_encoder_event_t;
 

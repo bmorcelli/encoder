@@ -41,6 +41,7 @@ void test(void *arg)
     re.pin_a = RE_A_GPIO;
     re.pin_b = RE_B_GPIO;
     re.pin_btn = RE_BTN_GPIO;
+    re.pin_btn2 = GPIO_NUM_NC; // Set to a valid GPIO to enable the optional second button
     ESP_ERROR_CHECK(rotary_encoder_add(&re));
 
     rotary_encoder_event_t e;
@@ -54,18 +55,18 @@ void test(void *arg)
         switch (e.type)
         {
             case RE_ET_BTN_PRESSED:
-                ESP_LOGI(TAG, "Button pressed");
+                ESP_LOGI(TAG, "Button %d pressed", e.button + 1);
                 break;
             case RE_ET_BTN_RELEASED:
-                ESP_LOGI(TAG, "Button released");
+                ESP_LOGI(TAG, "Button %d released", e.button + 1);
                 break;
             case RE_ET_BTN_CLICKED:
-                ESP_LOGI(TAG, "Button clicked");
+                ESP_LOGI(TAG, "Button %d clicked", e.button + 1);
                 rotary_encoder_enable_acceleration(&re, 100);
                 ESP_LOGI(TAG, "Acceleration enabled");
                 break;
             case RE_ET_BTN_LONG_PRESSED:
-                ESP_LOGI(TAG, "Looooong pressed button");
+                ESP_LOGI(TAG, "Looooong pressed button %d", e.button + 1);
                 rotary_encoder_disable_acceleration(&re);
                 ESP_LOGI(TAG, "Acceleration disabled");
                 break;

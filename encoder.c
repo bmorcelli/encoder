@@ -59,64 +59,79 @@ static SemaphoreHandle_t mutex;
 static QueueHandle_t _queue;
 
 #define GPIO_BIT(x) ((x) < 32 ? BIT(x) : ((uint64_t)(((uint64_t)1)<<(x))))
+#define BTN_IDX_PRIMARY 0
+#define BTN_IDX_SECONDARY 1
 #define CHECK(x) do { esp_err_t __; if ((__ = x) != ESP_OK) return __; } while (0)
 #define CHECK_ARG(VAL) do { if (!(VAL)) return ESP_ERR_INVALID_ARG; } while (0)
+
+inline static void handle_button(rotary_encoder_t *re, gpio_num_t pin, size_t btn_idx)
+{
+    if (!GPIO_IS_VALID_GPIO(pin))
+        return;
+
+    rotary_encoder_btn_state_t *state = &re->btn_state[btn_idx];
+    uint64_t *pressed_time_us = &re->btn_pressed_time_us[btn_idx];
+
+    if (*state == RE_BTN_PRESSED && *pressed_time_us < CONFIG_RE_BTN_DEAD_TIME_US)
+    {
+        // Dead time
+        *pressed_time_us += CONFIG_RE_INTERVAL_US;
+        return;
+    }
+
+    rotary_encoder_event_t ev =
+    {
+        .sender = re,
+        .button = (rotary_encoder_button_t)btn_idx
+    };
+
+    if (gpio_get_level(pin) == BTN_PRESSED_LEVEL)
+    {
+        if (*state == RE_BTN_RELEASED)
+        {
+            // first press
+            *state = RE_BTN_PRESSED;
+            *pressed_time_us = 0;
+            ev.type = RE_ET_BTN_PRESSED;
+            xQueueSendToBack(_queue, &ev, 0);
+            return;
+        }
+
+        *pressed_time_us += CONFIG_RE_INTERVAL_US;
+
+        if (*state == RE_BTN_PRESSED && *pressed_time_us >= CONFIG_RE_BTN_LONG_PRESS_TIME_US)
+        {
+            // Long press
+            *state = RE_BTN_LONG_PRESSED;
+            ev.type = RE_ET_BTN_LONG_PRESSED;
+            xQueueSendToBack(_queue, &ev, 0);
+        }
+    }
+    else if (*state != RE_BTN_RELEASED)
+    {
+        bool clicked = *state == RE_BTN_PRESSED;
+        // released
+        *state = RE_BTN_RELEASED;
+        ev.type = RE_ET_BTN_RELEASED;
+        xQueueSendToBack(_queue, &ev, 0);
+        if (clicked)
+        {
+            ev.type = RE_ET_BTN_CLICKED;
+            xQueueSendToBack(_queue, &ev, 0);
+        }
+    }
+}
 
 inline static void read_encoder(rotary_encoder_t *re)
 {
     rotary_encoder_event_t ev =
     {
-        .sender = re
+        .sender = re,
+        .button = RE_BTN_NONE
     };
 
-    if (re->pin_btn < GPIO_NUM_MAX)
-        do
-        {
-            if (re->btn_state == RE_BTN_PRESSED && re->btn_pressed_time_us < CONFIG_RE_BTN_DEAD_TIME_US)
-            {
-                // Dead time
-                re->btn_pressed_time_us += CONFIG_RE_INTERVAL_US;
-                break;
-            }
-
-            // read button state
-            if (gpio_get_level(re->pin_btn) == BTN_PRESSED_LEVEL)
-            {
-                if (re->btn_state == RE_BTN_RELEASED)
-                {
-                    // first press
-                    re->btn_state = RE_BTN_PRESSED;
-                    re->btn_pressed_time_us = 0;
-                    ev.type = RE_ET_BTN_PRESSED;
-                    xQueueSendToBack(_queue, &ev, 0);
-                    break;
-                }
-
-                re->btn_pressed_time_us += CONFIG_RE_INTERVAL_US;
-
-                if (re->btn_state == RE_BTN_PRESSED && re->btn_pressed_time_us >= CONFIG_RE_BTN_LONG_PRESS_TIME_US)
-                {
-                    // Long press
-                    re->btn_state = RE_BTN_LONG_PRESSED;
-                    ev.type = RE_ET_BTN_LONG_PRESSED;
-                    xQueueSendToBack(_queue, &ev, 0);
-                }
-            }
-            else if (re->btn_state != RE_BTN_RELEASED)
-            {
-                bool clicked = re->btn_state == RE_BTN_PRESSED;
-                // released
-                re->btn_state = RE_BTN_RELEASED;
-                ev.type = RE_ET_BTN_RELEASED;
-                xQueueSendToBack(_queue, &ev, 0);
-                if (clicked)
-                {
-                    ev.type = RE_ET_BTN_CLICKED;
-                    xQueueSendToBack(_queue, &ev, 0);
-                }
-            }
-        }
-        while (0);
+    handle_button(re, re->pin_btn, BTN_IDX_PRIMARY);
+    handle_button(re, re->pin_btn2, BTN_IDX_SECONDARY);
 
     re->code <<= 2;
     re->code |= gpio_get_level(re->pin_a);
@@ -244,16 +259,21 @@ esp_err_t rotary_encoder_add(rotary_encoder_t *re)
     }
     io_conf.intr_type = GPIO_INTR_DISABLE;
     io_conf.pin_bit_mask = GPIO_BIT(re->pin_a) | GPIO_BIT(re->pin_b);
-    if (re->pin_btn < GPIO_NUM_MAX)
+    if (GPIO_IS_VALID_GPIO(re->pin_btn))
         io_conf.pin_bit_mask |= GPIO_BIT(re->pin_btn);
+    if (GPIO_IS_VALID_GPIO(re->pin_btn2))
+        io_conf.pin_bit_mask |= GPIO_BIT(re->pin_btn2);
     CHECK(gpio_config(&io_conf));
 
-    re->btn_state = RE_BTN_RELEASED;
-    re->btn_pressed_time_us = 0;
+    re->btn_state[BTN_IDX_PRIMARY] = RE_BTN_RELEASED;
+    re->btn_state[BTN_IDX_SECONDARY] = RE_BTN_RELEASED;
+    re->btn_pressed_time_us[BTN_IDX_PRIMARY] = 0;
+    re->btn_pressed_time_us[BTN_IDX_SECONDARY] = 0;
 
     xSemaphoreGive(mutex);
 
-    ESP_LOGI(TAG, "Added rotary encoder %d, A: %d, B: %d, BTN: %d", re->index, re->pin_a, re->pin_b, re->pin_btn);
+    ESP_LOGI(TAG, "Added rotary encoder %d, A: %d, B: %d, BTN1: %d, BTN2: %d",
+             re->index, re->pin_a, re->pin_b, re->pin_btn, re->pin_btn2);
     return ESP_OK;
 }
 
